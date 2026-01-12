@@ -1,0 +1,6 @@
+User-agent: *
+Allow: /
+Disallow: /.github/
+Disallow: /temp_extract/
+
+Sitemap: https://abdulelahothmangwaith.github.io/auto-guardian-system/sitemap.xml
