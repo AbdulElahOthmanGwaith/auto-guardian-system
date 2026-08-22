@@ -1,19 +1,66 @@
 import os
+import ipaddress
 import re
-import requests
+import socket
 from pathlib import Path
+from urllib.parse import urljoin, urlparse
+
+import requests
+
+
+_BLOCKED_HOSTNAMES = {"localhost", "localhost.localdomain", "metadata.google.internal"}
+_MAX_REDIRECTS = 3
+
 
 def find_links(text):
     # Regex to find URLs
     url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
-    return re.findall(url_pattern, text)
+    links = re.findall(url_pattern, text)
+    return [link.rstrip('.,;:!?)]}>') for link in links]
+
+
+def _is_public_http_url(url):
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    if parsed.username or parsed.password:
+        return False
+
+    hostname = parsed.hostname.lower().rstrip(".")
+    if hostname in _BLOCKED_HOSTNAMES or hostname.endswith(".local"):
+        return False
+
+    try:
+        addresses = socket.getaddrinfo(hostname, parsed.port, type=socket.SOCK_STREAM)
+    except (OSError, ValueError):
+        return False
+
+    for address in addresses:
+        ip = ipaddress.ip_address(address[4][0])
+        if any((ip.is_private, ip.is_loopback, ip.is_link_local, ip.is_multicast, ip.is_reserved, ip.is_unspecified)):
+            return False
+    return True
+
 
 def check_link(url):
+    current_url = url
     try:
-        response = requests.head(url, timeout=5, allow_redirects=True)
-        return response.status_code < 400
-    except:
+        for _ in range(_MAX_REDIRECTS + 1):
+            if not _is_public_http_url(current_url):
+                return False
+
+            response = requests.head(current_url, timeout=5, allow_redirects=False)
+            if 300 <= response.status_code < 400:
+                location = response.headers.get("Location")
+                if not location:
+                    return False
+                current_url = urljoin(current_url, location)
+                continue
+            return response.status_code < 400
+    except (requests.RequestException, OSError, ValueError):
         return False
+
+    return False
 
 def main():
     print("Starting Link Checker...")
